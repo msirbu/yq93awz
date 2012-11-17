@@ -1,0 +1,10 @@
+# Ignore the following directories
+temp
+data
+
+# Ignore all files ending with ~
+*.bak
+
+# Ignore the target directory
+# Matches "target" in any subfolder
+# target/ 
