@@ -1,6 +1,7 @@
 # Ignore the following directories
 temp
 data
+archive
 
 # Ignore all files ending with ~
 *.bak
