@@ -2,10 +2,15 @@
 #
 # print refund checks
 
-$transferPath = "T:\"
+$transferPath = "Z:\transfer\"
+# $transferPath = "T:\"
 $dataPath = ".\temp\"
 $superbillBlank = "C:\apln\bin\temp\superbill.pdf"
 $configFile = "C:\apln\bin\resource\stmt_config.txt"
+$opName = "statement"
+
+# original .xsl file was stmt2fo.xsl
+# current file uses test2fo.xsl
 
 # --------------------------------------------- functions ------------------------------
 
@@ -40,6 +45,45 @@ function set_next_stmt_number
         New-Item $configFile -type file -force -value $next_stmt.tostring()
     }
 }   # end set_next_stmt_number
+# ----------------------------------------------------------
+# adds needed 0's at the end or to replace "." inside a chart name
+
+function expand_medisoft_chart
+{
+    param([string] $in_chart )
+
+    $len=$in_chart.length
+
+    if( $len -ge 8 )   # full chart name, no processing
+    {
+        return $in_chart.toupper()
+    }
+
+    $out_chart = $in_chart
+
+    # ---------------------------
+    # fill "." with 0's
+
+    if( $out_chart.contains( "." ) )
+    {
+        while( $out_chart.length -le 8 )
+        {
+            $out_chart = $out_chart.replace( ".", ".0" )
+        }
+        $out_chart = $out_chart.replace( ".", "" )
+
+        return $out_chart.toupper()        
+    }
+
+    # fill end with 0's; no "." present
+    while( $out_chart.length -lt 8 )
+    {
+        $out_chart += "0"
+    }
+
+    return $out_chart.toupper()
+
+}   # end expand_medisoft_chart
 
 # --------------------------------------------- end functions --------------------------
 
@@ -49,7 +93,7 @@ if( -not ( test-path $transferPath ) )
 {
     write-host  " "
     write-host -foregroundColor Red "Transfer directory" $transferPath "does not exist, we have failed."
-    write-host "Please print refund manually."
+    write-host "Please print $opName manually."
     write-host  " "
     exit
 }
@@ -60,20 +104,31 @@ if( -not ( test-path $dataPath ) )
 {
     write-host  " "
     write-host -foregroundColor Red "Data directory" $dataPath "does not exist, we have failed."
-    write-host "Please print refund manually."
+    write-host "Please print $opName manually."
     write-host  " "
     exit
 }
+
+# --------------------------------------------- program constants, ops, etc.
+
+$verbose = $false    #if we report various operations to the console
+$op = "stmt"   # the default op is stmt; could be also "rebill"
 
 
 $len = $args.Length
 
 if ( $len -lt 1 )
 {
+    $my_cmd = $myinvocation.mycommand.name
+    write-host
     write-host "Usage:"
-    write-host "`t cmd <chart> <stmt_number>"
-    write-host "`t cmd cfg"
-    write-host "`t cmd set <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd <chart> <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd cfg                       [shows $opName configuration]"
+    write-host -foregroundcolor yellow "`t $my_cmd set <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd back                      [rolls $opName number back by one]"
+    write-host -foregroundcolor yellow "`t $my_cmd reprint <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd rebill <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd status <stmt_number>"
     
 #    write-host "`t (not yet) cmd -name <beginning of name>"
 #    write-host "`t (not yet) cmd <chart> [-fac {r|s}] [-date <date>]"
@@ -89,7 +144,7 @@ if ( $len -lt 1 )
 if( $args[0] -eq "cfg" )
 {
     $next_stmt = get_next_stmt_number
-    write-host "`nNext statement = $next_stmt"
+    write-host "`nNext $opName = $next_stmt"
     write-host "`nDone.`n"
     
     exit
@@ -115,6 +170,21 @@ if( $args[0] -eq "set" )
 
 # ===================================
 
+if( $args[0] -eq "back" )
+{
+
+    $next_stmt =  get_next_stmt_number
+    $next_stmt -= 1
+    set_next_stmt_number $next_stmt
+
+    write-host "`nNext $opName = $next_stmt"
+    write-host "`nDone.`n"
+    
+    exit
+}
+
+# ===================================
+
 if( $args[0] -eq "reprint" )
 {
     if ( $len -le 1 )
@@ -130,7 +200,7 @@ if( $args[0] -eq "reprint" )
 
     if( $foundDir -eq $null )
     {
-        write-host "No statement" $stmt
+        write-host "No $opName" $stmt
     } else 
     {
         foreach( $elem in $foundDir )
@@ -144,7 +214,113 @@ if( $args[0] -eq "reprint" )
     exit
 }
 
+$have_args = $false  #use if we get arguments from the xml file.
 
+# --------------------------------------------  rebill  --------------------
+
+if( $args[0] -eq "rebill" )
+{
+    if ( $len -le 1 )
+    {
+        write-host "Usage:"
+        write-host "`t cmd rebill <stmt_number>"
+        exit
+    }
+
+    $op = "rebill"
+    $stmt = [int] $args[1]
+    $filterStr = "stmt_" + $stmt.tostring("00000") + "*.xml"
+           write-host "filter: " $filterStr
+    $foundDir = dir "." -filter $filterStr -recurse
+
+    if( $foundDir -eq $null )
+    {  # could not find the original statement
+        write-host "No statement to rebill" $stmt
+        write-host "`nDone.`n"
+    
+        exit
+    } 
+
+    $xmlPrevStmtName = ""
+
+    foreach( $elem in $foundDir )
+    {
+        write-host "rebill stmt" $elem.FullName
+        # Start-Process $elem.FullName -verb open   
+        [xml] $inputFile = get-content $elem.FullName
+
+        $xmlPrevStmtName = $elem.FullName 
+        $converted = $false
+
+        $sb = New-Object System.Text.StringBuilder
+        $sw = New-Object System.IO.StringWriter($sb)
+        $writer = New-Object System.Xml.XmlTextWriter($sw)
+        $writer.Formatting = [System.Xml.Formatting]::Indented
+
+        $inputFile.Save($writer)
+        $writer.Close()
+        $sw.Dispose()
+
+        if( $verbose )
+        {
+            write-host $sb.ToString()
+        }
+
+        # --------------------------------------------------------
+        # read the file, convert it to current version if needed.
+
+        $version = $inputFile.stmt.ver
+        if( $version -eq $null )
+        {  #can't work if file has no version.
+            write-host -foregroundColor red "No version for xml statement, can't rebill" $stmt
+            write-host -foregroundColor yellow "`nDone.`n"    
+            exit        
+        }
+
+        if( $version -eq "v1.0.1" )
+        {  #need to convert to latest version
+            # write-host -foregroundColor yellow "`nbefore conversion.`n"    
+
+            #generate the destination file name (add _02 before the .xml)
+
+            $xmlPrevStmtName = $xmlPrevStmtName.Replace(".xml", "_02.xml")
+            $converted = $true    # converted file; we can move the copy to the transfer directory.
+
+            & .\convertxml.ps1 stmt $elem.FullName $xmlPrevStmtName v1.1.0
+            # write-host -foregroundColor yellow "`nafter conversion.`n"    
+            
+            $inputFile = get-content $xmlPrevStmtName  # $elem.FullName
+
+            $sb = New-Object System.Text.StringBuilder
+            $sw = New-Object System.IO.StringWriter($sb)
+            $writer = New-Object System.Xml.XmlTextWriter($sw)
+            $writer.Formatting = [System.Xml.Formatting]::Indented
+
+            $inputFile.Save($writer)
+            $writer.Close()
+            $sw.Dispose()
+
+            if( $verbose )
+            {
+                write-host " "
+                write-host -foregroundColor yellow $sb.ToString() "`n"
+            }
+
+        }
+
+        # ------------------------------
+        # prepare information to generate the new file
+
+        break   # do this for only one file.
+    }
+
+    # get the information from the xml file
+    $chart = $inputFile.stmt.Chart
+
+    write-host "`nDone.`n"
+
+    # exit
+}
 
 # ============================ process "regular" statements ================= 
 
@@ -154,26 +330,36 @@ $defaultDayString = get-date -uformat "%Y_%m_%d"
 $hasName = $false
 $prefix = ""
 $i = 0;
-while ( $i -lt $len )
+if( $op -eq "stmt" )   # do parameter parsing, otherwise info is available
 {
-    # write-host $i $args[$i]
-
-    if( $i -eq 0 )
+    while ( $i -lt $len )
     {
-        $chart = $args[$i]
-        $i = $i + 1
-        continue
-    }
+        # write-host $i $args[$i]
 
-    if( $i -eq 1 )
-    {
-     #   [int] $num = $args[$i]
-        $i = $i + 1
-        continue
-    }
+        if( $i -eq 0 )
+        {
+            $chart = expand_medisoft_chart $args[$i]
+            $i = $i + 1
+            continue
+        }
 
-    $i = $i + 1
-}
+        if( $i -eq 1 )
+        {
+            $flag = $args[$i]
+            $i = $i + 1
+            continue
+        }
+
+        if( $i -eq 2 )
+        {
+         #   [int] $flag = $args[$i]
+            $i = $i + 1
+            continue
+        }
+
+        $i = $i + 1
+    } # end while
+} #end if
 
 $num = get_next_stmt_number
 
@@ -181,7 +367,7 @@ write-host " "
 
 $printnum = $num.tostring("00000")
 
-write-host "Printing statement for $chart, number = $printnum"
+write-host "Printing $opName for $chart, number = $printnum"
 write-host " "
 
 $chart = $chart.toUpper()
@@ -208,13 +394,42 @@ $tempFileName = $fileName + ".temp"
 $tempFileDestFull = $dataPath + $tempFileName
 
 # --------------------------------------------------------------------------
+# copy/move previous xml file for rebills
 
+if( $op -eq "rebill" )
+{
+    #determine the "pure file name"
+    $xmlPrevStmtDestFileName = $xmlPrevStmtName.substring( $xmlPrevStmtName.lastindexof("\") + 1)
+    $xmlDestName = $transferPath + $xmlPrevStmtDestFileName
+
+    if( $converted )
+    {
+        #move file
+        write-host "moving $xmlPrevStmtName $xmlDestName"
+        mv $xmlPrevStmtName $xmlDestName
+    }
+    else
+    {
+        #copy file
+        write-host "copying $xmlPrevStmtName $xmlDestName"
+        cp $xmlPrevStmtName $xmlDestName
+    }
+}
+
+# --------------------------------------------------------------------------
 write-host "creating file `"$cmdFileNameFull`""
 write-host " "
 
-
-$content = "stmt $chart $printnum"
+if( $op -eq "rebill" )
+{
+    $content = "$op $chart $printnum $xmlPrevStmtDestFileName"
+}
+else
+{
+    $content = "stmt $chart $printnum $flag"
+}
 $test = New-Item $cmdFileNameFull -type file -force -value $content
+
 
 # --------------------------------------------------------------------------
 # prepare processing
@@ -234,16 +449,15 @@ mv -force $cmdFileNameFull $cmdFileDestFull
  
 # scan for result
 
-$i=10
+$i=30
 
 $done = $false
 while ( ($i -gt 0) -and (-not $done) )
 {
-    write-host "$i " -nonewline
 
     if( test-path $resFileDestFull )
     {
-        write-host "`n Statement processed, transferring ." -nonewline
+        write-host "`n $opName processed, transferring ." -nonewline
         
         mv -force $xmlFileDestFull $xmlFileNameFull 
         write-host "." -nonewline
@@ -252,18 +466,18 @@ while ( ($i -gt 0) -and (-not $done) )
         write-host "." -nonewline
         rm -force $resFileDestFull 
         write-host "." 
+        if( $op -eq "rebill" )
+        {
+            # rm -force $xmlDestName
+            write-host "." 
+        }
         write-host " " 
 
 
         # -----------------------------------------------------------------
         # create statement .pdf image
-        #PS C:\apln\bin> ..\java\fop-1.0\fop -xml z:\transfer\dir1.xml 
-        # -xsl ..\java\fop-1.0\mihai_test\name2fo.xsl -pdf .\temp\na
-        #PS C:\apln\bin> java -jar C:\downloads\pdfbox-app-1.6.0.jar Overlay 
-        # .\temp\name.pdf ..\java\fop-1.0\mihai_test\superbill
-        #.pdf .\temp\sup.pdf
 
-        &  ..\java\fop-1.0\fop -xml $xmlFileNameFull -xsl .\resource\stmt2fo.xsl -pdf $pdfFileDestFull
+        &  ..\java\fop-1.0\fop -xml $xmlFileNameFull -xsl .\resource\test2fo.xsl -pdf $pdfFileDestFull
 
         # -----------------------------------------------------------------
         # print statement
@@ -280,8 +494,9 @@ while ( ($i -gt 0) -and (-not $done) )
         $done = $true
         break
     }
-    start-sleep 3
+    start-sleep 1
     $i = $i - 1
+    write-host "." -nonewline
 }
 
 
