@@ -2,7 +2,9 @@
 #
 # print refund checks
 
-$transferPath = "Z:\transfer\"
+$transferPath = "\\mdsil01\medical\transfer\"
+#$transferPath = "Z:\transfer\"
+#$transferPath = "\\mdsil01\medidata\transfer\"
 # $transferPath = "T:\"
 $dataPath = ".\temp\"
 $superbillBlank = "C:\apln\bin\temp\superbill.pdf"
@@ -215,6 +217,7 @@ if( $args[0] -eq "reprint" )
 }
 
 $have_args = $false  #use if we get arguments from the xml file.
+$late_flag = $false  # while rebilling, to signal a statement is late
 
 # --------------------------------------------  rebill  --------------------
 
@@ -229,6 +232,15 @@ if( $args[0] -eq "rebill" )
 
     $op = "rebill"
     $stmt = [int] $args[1]
+
+    if ( $len -gt 2 )
+    {
+        if ( $args[2] -eq "-late" )
+        {
+            $late_flag = $true
+        }
+    }
+
     $filterStr = "stmt_" + $stmt.tostring("00000") + "*.xml"
            write-host "filter: " $filterStr
     $foundDir = dir "." -filter $filterStr -recurse
@@ -367,7 +379,13 @@ write-host " "
 
 $printnum = $num.tostring("00000")
 
-write-host "Printing $opName for $chart, number = $printnum"
+if( $late_flag )
+{
+    $temp = "<Mark as late.>"
+}
+
+write-host "Printing $opName for $chart, number = $printnum" -nonewline
+write-host -foregroundcolor yellow "   $temp"
 write-host " "
 
 $chart = $chart.toUpper()
@@ -465,14 +483,57 @@ while ( ($i -gt 0) -and (-not $done) )
         rm -force $cmdFileDestFull 
         write-host "." -nonewline
         rm -force $resFileDestFull 
-        write-host "." 
+        write-host "." -nonewline 
         if( $op -eq "rebill" )
         {
             # rm -force $xmlDestName
-            write-host "." 
+            write-host "."  -nonewline 
         }
         write-host " " 
 
+        if( $late_flag )
+        {
+            write-host "Marking the statement `"late`"." 
+
+            [xml] $inputFile = get-content $xmlFileNameFull
+            $node = $inputFile.SelectSingleNode( "stmt/summary" )
+            if( $node -ne $null )
+            {
+                # there is a summary node
+                $node2 = $node.SelectSingleNode( "late" )
+                if( $node2 -eq $null )
+                {
+                    write-host "`"Late`" node does NOT exist." 
+                }
+                else
+                {
+                    write-host "`"Late`" node exists." 
+                    $node.late = "1"
+                }  #endif $node2
+            }
+
+            $sb = New-Object System.Text.StringBuilder
+            $sw = New-Object System.IO.StringWriter($sb)
+            $writer = New-Object System.Xml.XmlTextWriter($sw)
+            $writer.Formatting = [System.Xml.Formatting]::Indented
+
+            $inputFile.Save($writer)
+            $writer.Close()
+            $sw.Dispose()
+
+            $outputXml =  $sb.ToString()
+            # potential issue: we need to delete characters to the "<stmt>" tag.
+            $outputXml = $outputXml.substring( $outputXml.indexof("<stmt>"))
+
+            if( $verbose )
+            {
+                write-host -foregroundColor yellow "`n$outputXml`n"
+            }
+
+            $ignore = New-Item $xmlFileNameFull -type file -force -value $outputXml
+
+
+        }  #endif late_flag
 
         # -----------------------------------------------------------------
         # create statement .pdf image
