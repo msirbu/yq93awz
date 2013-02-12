@@ -242,13 +242,14 @@
                                             </fo:block>
                                         </xsl:otherwise>
                                     </xsl:choose>
-                                    <fo:block font-size="10pt" margin-top="4mm"> 
+                                    <fo:block font-size="10pt" margin-top="2mm"> 
                                             Medical insurance, if any, has already paid its share of 
                                             the included charges. The remaining balance is your responsibility.
                                     </fo:block>
                                     <xsl:choose>
                                         <xsl:when test="stmt/summary/late &gt; 0">
-                                            <fo:block> Your payment is late and due immediately.  
+                                            <fo:block font-size="10pt" margin-top="2mm"  font-weight="bold" > 
+                                            Your payment is late and due immediately.  
                                             <!--    Please send a check or contact us for payment arrangements. -->
                                             </fo:block>   
                                         </xsl:when>
