@@ -2,7 +2,8 @@
 #
 # print refund checks
 
-$transferPath = "T:\"
+$transferPath = "\\mdsil01\medidata\transfer\"
+#$transferPath = "T:\"
 $dataPath = ".\temp\"
 $superbillBlank = "C:\apln\bin\temp\superbill.pdf"
 $configFile = "C:\apln\bin\resource\refund_config.txt"
