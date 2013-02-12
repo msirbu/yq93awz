@@ -130,6 +130,7 @@ if ( $len -lt 1 )
     write-host -foregroundcolor yellow "`t $my_cmd back                      [rolls $opName number back by one]"
     write-host -foregroundcolor yellow "`t $my_cmd reprint <stmt_number>"
     write-host -foregroundcolor yellow "`t $my_cmd rebill <stmt_number>"
+    write-host -foregroundcolor yellow "`t $my_cmd rebuild <stmt_number>     [rebuild/recreate stmt # from xml file]"
     write-host -foregroundcolor yellow "`t $my_cmd status <stmt_number>"
     
 #    write-host "`t (not yet) cmd -name <beginning of name>"
@@ -332,6 +333,64 @@ if( $args[0] -eq "rebill" )
     write-host "`nDone.`n"
 
     # exit
+}
+
+# --------------------------------------------  rebuild  --------------------
+
+if( $args[0] -eq "rebuild" )
+{
+    if ( $len -le 1 )
+    {
+        write-host "Usage:"
+        write-host "`t cmd rebuild <stmt_number>"
+        exit
+    }
+
+    $op = "rebuild"
+    $stmt = [int] $args[1]
+
+    $filterStr = "stmt_" + $stmt.tostring("00000") + "*.xml"
+           write-host "filter: " $filterStr
+    $foundDir = dir "." -filter $filterStr -recurse
+
+    if( $foundDir -eq $null )
+    {  # could not find the original statement
+        write-host "No statement to $op " $stmt
+        write-host "`nDone.`n"
+    
+        exit
+    } 
+
+    $xmlPrevStmtName = ""
+
+    foreach( $elem in $foundDir )
+    {
+        write-host "$op stmt" $elem.FullName
+
+        # ------------------------------
+        # prepare information to generate the new file
+
+        $pdfFileDestFull = $dataPath + $elem.Name.replace( ".xml", ".pdf" )
+
+        # -----------------------------------------------------------------
+        # re-create statement .pdf image
+
+        &  ..\java\fop-1.0\fop -xml $elem.FullName -xsl .\resource\test2fo.xsl -pdf $pdfFileDestFull
+
+        # -----------------------------------------------------------------
+        # print statement
+     
+        Start-Process $pdfFileDestFull -verb open
+
+        break   # do this for only one (first) xml file.
+    }
+
+    # ------------------------------
+    # done rebuilding statement file
+
+    write-host "`nDone.`n"
+
+    exit
 }
 
 # ============================ process "regular" statements ================= 
